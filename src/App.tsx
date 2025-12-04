@@ -186,7 +186,7 @@ function App() {
                      activeTab === 'biweekly' ? PRICES.BIWEEKLY : 
                      activeTab === 'monthly' ? PRICES.MONTHLY : 0;
     if (priceUSD > 0) {
-      return ((priceUSD * ticketCount) / ethPriceUsd).toFixed(18);
+      return ((priceUSD * ticketCount) / ethPriceUsd).toFixed(6);
     }
     return "0";
   }, [ticketCount, activeTab, manualEthInput]);
@@ -213,7 +213,7 @@ function App() {
     setShowResultModal(false);
     setWinDetails(null);
     
-    const cost = (PRICES.INSTANT / ethPriceUsd).toFixed(6);
+    const cost = (PRICES.INSTANT / ethPriceUsd).toFixed(18);
     writeContract({
       address: CONTRACT_ADDRESS,
       abi: lotteryAbi,
