@@ -170,7 +170,7 @@ function App() {
 
       const newItem: HistoryItem = {
         type: 'Spin',
-        amount: (PRICES.INSTANT / ethPriceUsd).toFixed(6),
+        amount: (PRICES.INSTANT / ethPriceUsd).toFixed(18),
         date: new Date().toLocaleDateString(),
         hash: hash
       };
@@ -348,7 +348,7 @@ function App() {
       <div>
         <p className="claim-title">Pending Winnings</p>
         <p className="claim-amount">
-          {Number(formatEther(safeClaimableAmount)).toFixed(6)} ETH
+          {Number(formatEther(safeClaimableAmount)).toFixed(18)} ETH
         </p>
         <p className="claim-usd">
           ≈ ${(Number(formatEther(safeClaimableAmount)) * ethPriceUsd).toFixed(2)}
@@ -383,7 +383,7 @@ function App() {
               <div className="instant-header">
                 <h2>Spin & Win!</h2>
                 <p className="subtitle">
-                  Entry: $0.50 (≈{(PRICES.INSTANT / ethPriceUsd).toFixed(6)} ETH)
+                  Entry: $0.50 (≈{(PRICES.INSTANT / ethPriceUsd).toFixed(18)} ETH)
                   {priceLoading && <span className="price-loading"> (updating...)</span>}
                 </p>
               </div>
@@ -517,7 +517,7 @@ function App() {
                 <div className="price-info">
                   <span className="ticket-icon">🎟️</span>
                   <span>${PRICES[activeTab.toUpperCase() as keyof typeof PRICES]} per ticket</span>
-                  <span className="eth-price">(≈{(PRICES[activeTab.toUpperCase() as keyof typeof PRICES] / ethPriceUsd).toFixed(6)} ETH)</span>
+                  <span className="eth-price">(≈{(PRICES[activeTab.toUpperCase() as keyof typeof PRICES] / ethPriceUsd).toFixed(18)} ETH)</span>
                 </div>
 
                 <div className="ticket-slider-section">
