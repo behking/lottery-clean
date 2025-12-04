@@ -170,7 +170,7 @@ function App() {
 
       const newItem: HistoryItem = {
         type: 'Spin',
-        amount: (PRICES.INSTANT / ethPriceUsd).toFixed(18),
+        amount: (PRICES.INSTANT / ethPriceUsd).toFixed(6),
         date: new Date().toLocaleDateString(),
         hash: hash
       };
@@ -186,7 +186,7 @@ function App() {
                      activeTab === 'biweekly' ? PRICES.BIWEEKLY : 
                      activeTab === 'monthly' ? PRICES.MONTHLY : 0;
     if (priceUSD > 0) {
-      return ((priceUSD * ticketCount) / ethPriceUsd).toFixed(6);
+      return ((priceUSD * ticketCount) / ethPriceUsd).toFixed(18);
     }
     return "0";
   }, [ticketCount, activeTab, manualEthInput]);
