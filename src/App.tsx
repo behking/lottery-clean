@@ -341,21 +341,23 @@ function App() {
           </div>
         )}
 
-        {safeClaimableAmount && safeClaimableAmount > 0n && (
-          <div className="claim-banner">
-            <div className="claim-info">
-              <span className="money-icon">💰</span>
-              <div>
-                <p className="claim-title">Pending Winnings</p>
-                <p className="claim-amount">{Number(formatEther(safeClaimableAmount)).toFixed(6)} ETH</p>
-                <p className="claim-usd">≈ ${(Number(formatEther(safeClaimableAmount)) * ethPriceUsd).toFixed(2)}</p>
-              </div>
-            </div>
-            <button onClick={handleClaim} className="claim-btn-inline pulse-anim" disabled={isPending}>
-              CLAIM NOW
-            </button>
-          </div>
-        )}
+       {safeClaimableAmount > 0n && (
+  <div className="claim-banner">
+    <div className="claim-info">
+      <span className="money-icon">💰</span>
+      <div>
+        <p className="claim-title">Pending Winnings</p>
+        <p className="claim-amount">{Number(formatEther(safeClaimableAmount)).toFixed(6)} ETH</p>
+        <p className="claim-usd">
+          ≈ ${(Number(formatEther(safeClaimableAmount)) * ethPriceUsd).toFixed(2)}
+        </p>
+      </div>
+    </div>
+    <button onClick={handleClaim} className="claim-btn-inline pulse-anim" disabled={isPending}>
+      CLAIM NOW
+    </button>
+  </div>
+)}
 
         <nav className="nav-tabs">
           {(['instant', 'weekly', 'biweekly', 'monthly', 'history'] as TabType[]).map((tab) => (
