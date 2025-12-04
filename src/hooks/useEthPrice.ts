@@ -47,12 +47,31 @@
 //   };
 // }
 
+// useEthPrice.ts
+//
+// MVP mode: fixed ETH price = $3000 (same as MockPriceFeed contract)
+// Later, when you switch to real Chainlink, you just remove the hardcoded price.
+
 export function useEthPrice() {
+  const price = 3000; // 💲 قیمت ثابت دقیقاً مطابق MockPriceFeed
+
   return {
-    price: 3000,        // قیمت ثابت مثل قرارداد
+    price,           // USD price per 1 ETH
     isLoading: false,
     error: null,
     lastUpdated: null,
-    refetch: () => {}   // برای سازگاری با بقیه کد
+    refetch: () => {}
+  };
+}
+
+// -----------------------------------------------
+// Helper: Convert USD → ETH with 18 decimals
+// -----------------------------------------------
+export function usdToEth(usd: number, ethPriceUsd: number) {
+  const exact = usd / ethPriceUsd;
+
+  return {
+    raw: exact.toFixed(18),   // مقدار واقعی برای ارسال به قرارداد
+    display: exact.toFixed(6) // مقدار برای نمایش
   };
 }

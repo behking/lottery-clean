@@ -2,9 +2,10 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAccount, useConnect, useDisconnect, useChainId, useWatchContractEvent, useSwitchChain } from 'wagmi';
 import { injected } from 'wagmi/connectors';
 import { useLotteryContract, useRoundDetails, usePendingWinnings, lotteryAbi, CONTRACT_ADDRESS } from './hooks/useTaskContract';
-import { useEthPrice } from './hooks/useEthPrice';
+
 import { parseEther, formatEther } from 'viem';
 import sdk from '@farcaster/miniapp-sdk';
+import { useEthPrice, usdToEth } from './hooks/useEthPrice';
 
 const PRICES = { INSTANT: 0.5, WEEKLY: 1, BIWEEKLY: 5, MONTHLY: 20 };
 const TARGET_CHAIN_ID = 1946;
@@ -178,20 +179,28 @@ function App() {
     }
   }, [isConfirmed, hash, activeTab, refetchClaim]);
 
-  const getEthAmount = useCallback(() => {
-    if (manualEthInput && parseFloat(manualEthInput) > 0) {
-      return manualEthInput;
-    }
-    const priceUSD = activeTab === 'weekly' ? PRICES.WEEKLY : 
-                     activeTab === 'biweekly' ? PRICES.BIWEEKLY : 
-                     activeTab === 'monthly' ? PRICES.MONTHLY : 0;
-    if (priceUSD > 0) {
-      return ((priceUSD * ticketCount) / ethPriceUsd).toFixed(18);
-    }
-    return "0";
-  }, [ticketCount, activeTab, manualEthInput]);
+//   const getEthAmount = useCallback(() => {
+//   // اگر کاربر دستی مقدار وارد کرده
+//   if (manualEthInput && parseFloat(manualEthInput) > 0) {
+//     return manualEthInput;
+//   }
 
-  const ethAmount = getEthAmount();
+//   // قیمت هر بلیط به دلار
+//   const priceUSD = activeTab === 'weekly' ? PRICES.WEEKLY : 
+//                    activeTab === 'biweekly' ? PRICES.BIWEEKLY : 
+//                    activeTab === 'monthly' ? PRICES.MONTHLY : 
+//                    activeTab === 'instant' ? PRICES.INSTANT : 0;
+
+//   if (priceUSD > 0) {
+//     const amount = usdToEth(priceUSD * ticketCount, ethPriceUsd);
+//     return amount.raw; // مقدار دقیق برای قرارداد
+//   }
+
+//   return "0";
+// }, [ticketCount, activeTab, manualEthInput, ethPriceUsd]);
+
+
+  //const ethAmount = getEthAmount();
 
   const ensureNetwork = async () => {
     if (chainId !== TARGET_CHAIN_ID) {
@@ -238,20 +247,27 @@ function App() {
   };
 
   const handleBuyTicket = async () => {
-    if (!await ensureNetwork()) return;
-    if (!writeContract || !address) return; // Fix: Check for address
-    
-    const typeId = LOTTERY_TYPE_MAP[activeTab] || 1;
+  if (!await ensureNetwork()) return;
+  if (!writeContract || !address) return;
 
-    writeContract({
-      address: CONTRACT_ADDRESS,
-      abi: lotteryAbi,
-      functionName: 'buyTicket',
-      args: [typeId, BigInt(ticketCount)], 
-      value: parseEther(ethAmount),
-      account: address, // Fix: Added account property
-    });
-  };
+  const typeId = LOTTERY_TYPE_MAP[activeTab] || 1;
+  const ethAmountObj = usdToEth(
+    activeTab === 'weekly' ? PRICES.WEEKLY * ticketCount :
+    activeTab === 'biweekly' ? PRICES.BIWEEKLY * ticketCount :
+    activeTab === 'monthly' ? PRICES.MONTHLY * ticketCount :
+    PRICES.INSTANT * ticketCount,
+    ethPriceUsd
+  );
+
+  writeContract({
+    address: CONTRACT_ADDRESS,
+    abi: lotteryAbi,
+    functionName: activeTab === 'instant' ? 'spinWheel' : 'buyTicket',
+    args: activeTab === 'instant' ? [] : [typeId, BigInt(ticketCount)],
+    value: parseEther(ethAmountObj.raw),
+    account: address,
+  });
+};
 
   const handleManualEthChange = (value: string) => {
     setManualEthInput(value);
@@ -558,14 +574,33 @@ function App() {
                 </div>
 
                 <div className="total-section">
-                  <div className="total-row">
-                    <span>Total Cost:</span>
-                    <div className="total-amount">
-                      <span className="eth-total">{ethAmount} ETH</span>
-                      <span className="usd-total">≈ ${(parseFloat(ethAmount) * ethPriceUsd).toFixed(2)}</span>
-                    </div>
-                  </div>
-                </div>
+  <div className="total-row">
+    <span>Total Cost:</span>
+    <div className="total-amount">
+      <span className="eth-total">
+        {usdToEth(
+          activeTab === 'weekly' ? PRICES.WEEKLY * ticketCount :
+          activeTab === 'biweekly' ? PRICES.BIWEEKLY * ticketCount :
+          activeTab === 'monthly' ? PRICES.MONTHLY * ticketCount :
+          PRICES.INSTANT * ticketCount,
+          ethPriceUsd
+        ).display} ETH
+      </span>
+      <span className="usd-total">
+        ≈ ${(
+          Number(usdToEth(
+            activeTab === 'weekly' ? PRICES.WEEKLY * ticketCount :
+            activeTab === 'biweekly' ? PRICES.BIWEEKLY * ticketCount :
+            activeTab === 'monthly' ? PRICES.MONTHLY * ticketCount :
+            PRICES.INSTANT * ticketCount,
+            ethPriceUsd
+          ).raw) * ethPriceUsd
+        ).toFixed(2)}
+      </span>
+    </div>
+  </div>
+</div>
+
 
                 <button 
                   className="action-btn buy-btn" 
