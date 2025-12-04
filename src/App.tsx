@@ -348,7 +348,7 @@ function App() {
       <div>
         <p className="claim-title">Pending Winnings</p>
         <p className="claim-amount">
-          {Number(formatEther(safeClaimableAmount)).toFixed(18)} ETH
+          {Number(formatEther(safeClaimableAmount)).toFixed(6)} ETH
         </p>
         <p className="claim-usd">
           ≈ ${(Number(formatEther(safeClaimableAmount)) * ethPriceUsd).toFixed(2)}
