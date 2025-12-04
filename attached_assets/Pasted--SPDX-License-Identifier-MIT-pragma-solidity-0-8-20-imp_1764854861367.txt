@@ -1,0 +1,298 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+
+contract StartaleLottery is Ownable, ReentrancyGuard {
+    
+    // --- Configuration ---
+    AggregatorV3Interface internal priceFeed;
+    address public treasury;
+    uint256 public treasuryFeePercent = 20; // 20% goes to treasury
+    
+    // Ticket Prices in USD (scaled by 10^18 for precision, e.g., 1 ether = $1.00 logic base)
+    // We use standard 18 decimals for USD calculation inside to match ETH
+    uint256 public instantPriceUSD = 0.5 * 1e18;   // $0.50
+    uint256 public weeklyPriceUSD = 1 * 1e18;      // $1.00
+    uint256 public biWeeklyPriceUSD = 5 * 1e18;    // $5.00
+    uint256 public monthlyPriceUSD = 20 * 1e18;    // $20.00
+
+    // Lottery Types
+    enum LotteryType { INSTANT, WEEKLY, BIWEEKLY, MONTHLY }
+
+    struct LotteryRound {
+        uint256 id;
+        uint256 endTime;
+        address[] participants;
+        uint256 prizePool;
+        address[] winners;
+        bool isActive;
+    }
+
+    // Mappings
+    mapping(LotteryType => LotteryRound) public lotteries;
+    mapping(address => uint256) public pendingWinnings; // Amount user can claim
+    // Ticket Credits won from Spin Wheel (Type => Count)
+    mapping(address => mapping(LotteryType => uint256)) public ticketCredits; 
+
+    // Events for Frontend (Farcaster Frame)
+    event TicketPurchased(address indexed buyer, LotteryType indexed lotteryType, uint256 quantity, uint256 costETH, uint256 timestamp);
+    event SpinResult(address indexed player, bool isWin, uint256 prizeAmount, string prizeType);
+    event LotteryDrawn(LotteryType indexed lotteryType, uint256 roundId, address[] winners, uint256 prizePerWinner);
+    event WinningsClaimed(address indexed user, uint256 amount);
+
+    constructor(address _priceFeed, address _treasury) Ownable(msg.sender) {
+        priceFeed = AggregatorV3Interface(_priceFeed);
+        treasury = _treasury;
+
+        // Initialize Lotteries
+        _startNewRound(LotteryType.WEEKLY, 7 days);
+        _startNewRound(LotteryType.BIWEEKLY, 14 days);
+        _startNewRound(LotteryType.MONTHLY, 30 days);
+    }
+
+    // -----------------------------------------
+    // 1. HELPER: Convert USD to ETH
+    // -----------------------------------------
+    function getEthCost(uint256 usdAmount) public view returns (uint256) {
+        (, int256 price, , , ) = priceFeed.latestRoundData();
+        require(price > 0, "Invalid price feed");
+        // Chainlink usually returns 8 decimals. ETH has 18.
+        // Formula: (USD_Amount * 1e18) / (Price * 1e10) -> returns ETH Wei
+        // However, since our usdAmount input is already 1e18 based:
+        return (usdAmount * 1e18) / (uint256(price) * 1e10);
+    }
+
+    // -----------------------------------------
+    // 2. INSTANT LOTTERY (SPIN WHEEL)
+    // -----------------------------------------
+    function spinWheel() external payable nonReentrant {
+        uint256 ethCost = getEthCost(instantPriceUSD);
+        require(msg.value >= ethCost, "Insufficient ETH for Spin");
+
+        // 100% added to contract balance (used for paying out prizes)
+        // No treasury fee for Instant as per request
+
+        // Pseudo-random generation (For MVP on Soneium Testnet)
+        // WARN: Use Chainlink VRF for Mainnet production
+        uint256 random = uint256(keccak256(abi.encodePacked(block.timestamp, msg.sender, block.prevrandao))) % 100;
+
+        string memory prizeType = "LOSE";
+        uint256 prizeAmount = 0;
+        bool isWin = false;
+
+        // Probabilities:
+        if (random < 2) { 
+            // 2% Chance: $10 Prize
+            prizeAmount = getEthCost(10 * 1e18);
+            if(address(this).balance >= prizeAmount) {
+                pendingWinnings[msg.sender] += prizeAmount;
+                prizeType = "$10";
+                isWin = true;
+            }
+        } else if (random < 10) {
+            // 8% Chance: $5 Prize
+            prizeAmount = getEthCost(5 * 1e18);
+            if(address(this).balance >= prizeAmount) {
+                pendingWinnings[msg.sender] += prizeAmount;
+                prizeType = "$5";
+                isWin = true;
+            }
+        } else if (random < 30) {
+            // 20% Chance: $2 Prize
+            prizeAmount = getEthCost(2 * 1e18);
+            if(address(this).balance >= prizeAmount) {
+                pendingWinnings[msg.sender] += prizeAmount;
+                prizeType = "$2";
+                isWin = true;
+            }
+        } else if (random < 50) {
+            // 20% Chance: Free Weekly Ticket
+            ticketCredits[msg.sender][LotteryType.WEEKLY] += 1;
+            prizeType = "Weekly Ticket";
+            isWin = true;
+        }
+        // Remaining 50%: Lose (Money stays in pool)
+
+        emit SpinResult(msg.sender, isWin, prizeAmount, prizeType);
+    }
+
+    // -----------------------------------------
+    // 3. BUY TICKETS (Weekly, BiWeekly, Monthly)
+    // -----------------------------------------
+    function buyTicket(LotteryType _type, uint256 _quantity) external payable nonReentrant {
+        require(_type != LotteryType.INSTANT, "Use spinWheel for Instant");
+        require(_quantity > 0, "Quantity must be > 0");
+
+        uint256 unitPriceUSD;
+        if (_type == LotteryType.WEEKLY) unitPriceUSD = weeklyPriceUSD;
+        else if (_type == LotteryType.BIWEEKLY) unitPriceUSD = biWeeklyPriceUSD;
+        else unitPriceUSD = monthlyPriceUSD;
+
+        uint256 totalCostETH = getEthCost(unitPriceUSD * _quantity);
+
+        // Check if user has credits (from Spin Wheel)
+        uint256 credits = ticketCredits[msg.sender][_type];
+        uint256 payableQuantity = _quantity;
+
+        if (credits > 0) {
+            if (credits >= _quantity) {
+                ticketCredits[msg.sender][_type] -= _quantity;
+                payableQuantity = 0;
+            } else {
+                payableQuantity = _quantity - credits;
+                ticketCredits[msg.sender][_type] = 0;
+            }
+        }
+
+        if (payableQuantity > 0) {
+             // Recalculate cost for payable tickets
+            uint256 payCost = getEthCost(unitPriceUSD * payableQuantity);
+            require(msg.value >= payCost, "Insufficient ETH sent");
+
+            // Split 80/20
+            uint256 treasuryAmount = (payCost * treasuryFeePercent) / 100;
+            uint256 poolAmount = payCost - treasuryAmount;
+
+            // Transfer to Treasury immediately (or keep accounting to pull later)
+            // Here we send immediately to keep it simple
+            (bool success, ) = treasury.call{value: treasuryAmount}("");
+            require(success, "Treasury transfer failed");
+
+            lotteries[_type].prizePool += poolAmount;
+        }
+
+        // Add user to participants array multiple times
+        for(uint256 i=0; i < _quantity; i++){
+            lotteries[_type].participants.push(msg.sender);
+        }
+
+        emit TicketPurchased(msg.sender, _type, _quantity, msg.value, block.timestamp);
+    }
+
+    // -----------------------------------------
+    // 4. DRAW LOTTERY (Execution)
+    // -----------------------------------------
+    
+    // Can be called by anyone if time is up, or by Owner manually
+    function drawLottery(LotteryType _type) public nonReentrant {
+        LotteryRound storage round = lotteries[_type];
+        require(_type != LotteryType.INSTANT, "Cannot draw instant");
+        require(block.timestamp >= round.endTime, "Not yet time");
+        require(round.participants.length > 0, "No participants");
+        require(round.isActive, "Round not active");
+
+        // Winners count based on type
+        uint256 winnersCount;
+        if (_type == LotteryType.WEEKLY) winnersCount = 6;
+        else if (_type == LotteryType.BIWEEKLY) winnersCount = 3;
+        else winnersCount = 1;
+
+        if (round.participants.length < winnersCount) {
+            winnersCount = round.participants.length;
+        }
+
+        uint256 prizePerWinner = round.prizePool / winnersCount;
+        address[] memory currentWinners = new address[](winnersCount);
+
+        // Select Winners (Pseudo-random for MVP)
+        // For production, integrate Chainlink VRF here
+        uint256 nonce = 0;
+        for (uint256 i = 0; i < winnersCount; i++) {
+            uint256 randomIndex = uint256(keccak256(abi.encodePacked(
+                block.timestamp, 
+                block.prevrandao, 
+                round.participants.length,
+                nonce
+            ))) % round.participants.length;
+            
+            address winner = round.participants[randomIndex];
+            currentWinners[i] = winner;
+            pendingWinnings[winner] += prizePerWinner;
+
+            // Simple way to avoid picking same index strictly would require swapping, 
+            // but for MVP allowing same user (if they bought multiple tickets) is fair.
+            // If we want unique *people* regardless of tickets, logic changes.
+            // Assuming 1 Ticket = 1 Chance here.
+            
+            nonce++;
+        }
+
+        emit LotteryDrawn(_type, round.id, currentWinners, prizePerWinner);
+
+        // Reset Round
+        uint256 duration;
+        if (_type == LotteryType.WEEKLY) duration = 7 days;
+        else if (_type == LotteryType.BIWEEKLY) duration = 14 days;
+        else duration = 30 days;
+
+        _startNewRound(_type, duration);
+    }
+
+    // Manual Override for Admin
+    function adminForceDraw(LotteryType _type) external onlyOwner {
+        // Bypasses time check if needed, or fixes stuck rounds
+        LotteryRound storage round = lotteries[_type];
+        // Temporarily set time to now to pass the check in drawLottery
+        round.endTime = block.timestamp; 
+        drawLottery(_type);
+    }
+
+    function _startNewRound(LotteryType _type, uint256 _duration) internal {
+        lotteries[_type].id++;
+        lotteries[_type].endTime = block.timestamp + _duration;
+        lotteries[_type].prizePool = 0;
+        lotteries[_type].participants = new address[](0);
+        lotteries[_type].winners = new address[](0);
+        lotteries[_type].isActive = true;
+    }
+
+    // -----------------------------------------
+    // 5. CLAIM & UTILS
+    // -----------------------------------------
+    function claimPrize() external nonReentrant {
+        uint256 amount = pendingWinnings[msg.sender];
+        require(amount > 0, "Nothing to claim");
+
+        pendingWinnings[msg.sender] = 0;
+        (bool success, ) = payable(msg.sender).call{value: amount}("");
+        require(success, "Transfer failed");
+
+        emit WinningsClaimed(msg.sender, amount);
+    }
+
+    // Admin Config Functions
+    function setTicketPrices(uint256 _instant, uint256 _weekly, uint256 _biWeekly, uint256 _monthly) external onlyOwner {
+        instantPriceUSD = _instant;
+        weeklyPriceUSD = _weekly;
+        biWeeklyPriceUSD = _biWeekly;
+        monthlyPriceUSD = _monthly;
+    }
+
+    function setTreasury(address _newTreasury) external onlyOwner {
+        treasury = _newTreasury;
+    }
+
+    // View functions for Frontend
+    function getRoundDetails(LotteryType _type) external view returns (
+        uint256 endTime, 
+        uint256 pool, 
+        uint256 participantsCount, 
+        uint256 ticketPriceWei
+    ) {
+        LotteryRound storage round = lotteries[_type];
+        uint256 priceUSD;
+        if (_type == LotteryType.WEEKLY) priceUSD = weeklyPriceUSD;
+        else if (_type == LotteryType.BIWEEKLY) priceUSD = biWeeklyPriceUSD;
+        else priceUSD = monthlyPriceUSD;
+
+        return (
+            round.endTime,
+            round.prizePool,
+            round.participants.length,
+            getEthCost(priceUSD)
+        );
+    }
+}

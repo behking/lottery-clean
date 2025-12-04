@@ -1,0 +1,20 @@
+{
+  "frame": {
+    "name": "Star Lottery ",
+    "version": "1",
+    "iconUrl": "https://lotto-ivory-nine.vercel.app/icon.png",
+    "homeUrl": "https://lotto-ivory-nine.vercel.app/",
+    "imageUrl": "https://lotto-ivory-nine.vercel.app/image.png",
+    "splashImageUrl": "https://lotto-ivory-nine.vercel.app/splash.png",
+    "splashBackgroundColor": "#1a1a1a",
+    "webhookUrl": "https://lotto-ivory-nine.vercel.app//api/webhook",
+    "subtitle": "Star Lottery App",
+    "description": "just a lotto app",
+    "primaryCategory": "finance"
+  },
+  "accountAssociation": {
+    "header": "eyJmaWQiOjE0OTc0MjEsInR5cGUiOiJjdXN0b2R5Iiwia2V5IjoiMHg0OTYzOGQzYTRFMzQyOWQ2NDNFODA5QTkyYzk5RUJEOTQzNGYxNURDIn0",
+    "payload": "eyJkb21haW4iOiJsb3R0by1pdm9yeS1uaW5lLnZlcmNlbC5hcHAifQ",
+    "signature": "GEPjAsr14XHGMjx1K2va+WF6vWQCWfWk/qiIc4ENmJQxOWYCi3O8qCUNpwV3E2jnZ3h8UIO6fjLiZX5USQcPWhs="
+  }
+}

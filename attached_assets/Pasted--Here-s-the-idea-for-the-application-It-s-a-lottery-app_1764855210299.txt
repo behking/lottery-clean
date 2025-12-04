@@ -1,0 +1,48 @@
+**“Here’s the idea for the application:
+It’s a lottery app with multiple types of lotteries:
+
+• Instant (Spin-the-Wheel)
+• Weekly
+• Bi-weekly
+• Monthly
+
+In the instant mode, there’s a wheel where users can win $2, $5, or $10 prizes, or tickets for the weekly, bi-weekly, or monthly lotteries.
+
+In the weekly mode, there are 6 winners, and the pool is split evenly among them.
+In the bi-weekly mode, there are 3 winners, and the pool is divided evenly.
+In the monthly mode, there is one big winner who gets the entire pool.
+
+To participate:
+• Instant: the user pays $0.50
+• Weekly: $1 per ticket
+• Bi-weekly: $5 per ticket
+• Monthly: $20 per ticket
+
+In instant mode, 100% of the user’s payment goes to the pool.
+In weekly, bi-weekly, and monthly modes, 80% goes to the pool and 20% goes to the treasury.
+
+In instant mode, the wheel spins immediately after payment. If the user wins, they can claim instantly or take their prize as a ticket for another lottery.
+
+In weekly, bi-weekly, and monthly modes, the draw happens automatically at the scheduled time.
+Winners are displayed below the lottery page, and a user whose wallet is a winner will see a “Claim” button next to their name.
+
+At the top of each lottery page (weekly, bi-weekly, monthly), there is a countdown timer until the draw.
+
+There is also a bar showing:
+• How many tickets the user bought
+• The current pool balance
+• How much the user would win at the current ETH price
+
+Payments are in ETH, but the USD equivalent must be shown at the time of purchase.
+
+On the weekly, bi-weekly, and monthly pages, there is a slider allowing the user to select multiple tickets at once, plus a manual input field where they can enter the exact amount of ETH they want to pay.
+
+A bar also shows the split: 80% going to the pool and 20% to the treasury.
+
+There is another tab for payment history where users can see the date and amount of each payment.
+
+The contract also needs the ability to change the ticket prices and percentages later if needed.
+There must also be a mechanism for manually triggering the draw in case the automated draw fails.
+
+Now build the full frontend for this app idea I gave you at the beginning.
+Design all the pages with complete graphical details so I can have the final, polished, and beautiful frontend code for it.”**
