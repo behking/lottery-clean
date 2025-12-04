@@ -561,7 +561,7 @@ function App() {
                   <div className="total-row">
                     <span>Total Cost:</span>
                     <div className="total-amount">
-                      <span className="eth-total">{ethAmount} ETH</span>
+                      <span className="eth-total">{Number(ethAmount).toFixed(6)} ETH</span>
                       <span className="usd-total">≈ ${(parseFloat(ethAmount) * ethPriceUsd).toFixed(2)}</span>
                     </div>
                   </div>
