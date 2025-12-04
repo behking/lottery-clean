@@ -294,7 +294,7 @@ function App() {
     if (!roundData?.pool) return "0";
     const winnerCount = WINNER_COUNTS[activeTab] || 1;
     const prizePerWinner = Number(formatEther(roundData.pool)) / winnerCount;
-    return prizePerWinner.toFixed(4);
+    return prizePerWinner.toFixed(6);
   };
 
   if (!isSdkLoaded) {
@@ -341,26 +341,21 @@ function App() {
           </div>
         )}
 
-        {safeClaimableAmount > 0n && (
-  <div className="claim-banner">
-    <div className="claim-info">
-      <span className="money-icon">💰</span>
-      <div>
-        <p className="claim-title">Pending Winnings</p>
-        <p className="claim-amount">
-          {Number(formatEther(safeClaimableAmount)).toFixed(6)} ETH
-        </p>
-        <p className="claim-usd">
-          ≈ ${(Number(formatEther(safeClaimableAmount)) * ethPriceUsd).toFixed(2)}
-        </p>
-      </div>
-    </div>
-    <button onClick={handleClaim} className="claim-btn-inline pulse-anim" disabled={isPending}>
-      CLAIM NOW
-    </button>
-  </div>
-)}
-
+        {safeClaimableAmount && safeClaimableAmount > 0n && (
+          <div className="claim-banner">
+            <div className="claim-info">
+              <span className="money-icon">💰</span>
+              <div>
+                <p className="claim-title">Pending Winnings</p>
+                <p className="claim-amount">{Number(formatEther(safeClaimableAmount)).toFixed(6)} ETH</p>
+                <p className="claim-usd">≈ ${(Number(formatEther(safeClaimableAmount)) * ethPriceUsd).toFixed(2)}</p>
+              </div>
+            </div>
+            <button onClick={handleClaim} className="claim-btn-inline pulse-anim" disabled={isPending}>
+              CLAIM NOW
+            </button>
+          </div>
+        )}
 
         <nav className="nav-tabs">
           {(['instant', 'weekly', 'biweekly', 'monthly', 'history'] as TabType[]).map((tab) => (
@@ -383,7 +378,7 @@ function App() {
               <div className="instant-header">
                 <h2>Spin & Win!</h2>
                 <p className="subtitle">
-                  Entry: $0.50 (≈{(PRICES.INSTANT / ethPriceUsd).toFixed(18)} ETH)
+                  Entry: $0.50 (≈{(PRICES.INSTANT / ethPriceUsd).toFixed(6)} ETH)
                   {priceLoading && <span className="price-loading"> (updating...)</span>}
                 </p>
               </div>
@@ -480,7 +475,7 @@ function App() {
                   <span className="stat-icon">💎</span>
                   <div className="stat-info">
                     <p className="stat-label">Prize Pool</p>
-                    <p className="stat-value">{roundData ? Number(formatEther(roundData.pool)).toFixed(4) : '0'} ETH</p>
+                    <p className="stat-value">{roundData ? Number(formatEther(roundData.pool)).toFixed(6) : '0'} ETH</p>
                     <p className="stat-usd">≈ ${roundData ? (Number(formatEther(roundData.pool)) * ethPriceUsd).toFixed(2) : '0'}</p>
                   </div>
                 </div>
@@ -517,7 +512,7 @@ function App() {
                 <div className="price-info">
                   <span className="ticket-icon">🎟️</span>
                   <span>${PRICES[activeTab.toUpperCase() as keyof typeof PRICES]} per ticket</span>
-                  <span className="eth-price">(≈{(PRICES[activeTab.toUpperCase() as keyof typeof PRICES] / ethPriceUsd).toFixed(18)} ETH)</span>
+                  <span className="eth-price">(≈{(PRICES[activeTab.toUpperCase() as keyof typeof PRICES] / ethPriceUsd).toFixed(6)} ETH)</span>
                 </div>
 
                 <div className="ticket-slider-section">
@@ -605,7 +600,7 @@ function App() {
                             </span>
                           </div>
                           <div className="winner-right">
-                            <span className="winner-prize">{parseFloat(winner.prize).toFixed(4)} ETH</span>
+                            <span className="winner-prize">{parseFloat(winner.prize).toFixed(6)} ETH</span>
                             {winner.address === address && (
                               <button onClick={handleClaim} className="mini-claim-btn">Claim</button>
                             )}
@@ -645,7 +640,7 @@ function App() {
                         </div>
                       </div>
                       <div className="history-right">
-                        <p className="history-amount">-{item.amount} ETH</p>
+                        <p className="history-amount">-{parseFloat(item.amount).toFixed(6)} ETH</p>
                         <p className="history-usd">≈ ${(parseFloat(item.amount) * ethPriceUsd).toFixed(2)}</p>
                       </div>
                     </div>
