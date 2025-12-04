@@ -170,7 +170,7 @@ function App() {
 
       const newItem: HistoryItem = {
         type: 'Spin',
-        amount: (PRICES.INSTANT / ethPriceUsd).toFixed(6),
+        amount: (PRICES.INSTANT / ethPriceUsd).toFixed(18),
         date: new Date().toLocaleDateString(),
         hash: hash
       };
@@ -213,7 +213,7 @@ function App() {
     setShowResultModal(false);
     setWinDetails(null);
     
-    const cost = (PRICES.INSTANT / ethPriceUsd).toFixed(18);
+    const cost = (PRICES.INSTANT / ethPriceUsd).toFixed(6);
     writeContract({
       address: CONTRACT_ADDRESS,
       abi: lotteryAbi,
