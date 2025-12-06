@@ -4,6 +4,8 @@ import { injected } from 'wagmi/connectors';
 import { useRoundDetails, usePendingWinnings, lotteryAbi, CONTRACT_ADDRESS } from './hooks/useTaskContract';
 import { useEthPrice } from './hooks/useEthPrice';
 import { parseEther, formatEther } from 'viem';
+// @ts-ignore - viem exports these but types may not recognize them
+import { decodeAbiParameters, keccak256, toHex } from 'viem';
 import sdk from '@farcaster/miniapp-sdk';
 
 const PRICES = { INSTANT: 0.5, WEEKLY: 1, BIWEEKLY: 5, MONTHLY: 20 };
@@ -62,7 +64,7 @@ function App() {
   const { switchChainAsync } = useSwitchChain();
 
   const { writeContract: writeSpinContract, data: spinHash, isPending: spinPending } = useWriteContract();
-  const { isLoading: spinConfirming, isSuccess: spinConfirmed } = useWaitForTransactionReceipt({ hash: spinHash });
+  const { isLoading: spinConfirming, isSuccess: spinConfirmed, data: spinReceipt } = useWaitForTransactionReceipt({ hash: spinHash });
 
   const { writeContract: writeClaimContract, data: claimHash, isPending: claimPending } = useWriteContract();
   const { isLoading: claimConfirming, isSuccess: claimConfirmed } = useWaitForTransactionReceipt({ hash: claimHash });
@@ -267,7 +269,7 @@ function App() {
   }, [isSpinning, pendingPrizeType]);
 
   useEffect(() => {
-    if (spinConfirmed && spinHash && spinHash !== processedSpinHash.current) {
+    if (spinConfirmed && spinHash && spinReceipt && spinHash !== processedSpinHash.current) {
       processedSpinHash.current = spinHash;
       
       const newItem: HistoryItem = {
@@ -278,8 +280,35 @@ function App() {
       };
       setPaymentHistory(prev => [newItem, ...prev].slice(0, 50));
       refetchAllBalances();
+
+      const spinResultTopic = keccak256(toHex('SpinResult(address,bool,uint256,string)'));
+      for (const log of spinReceipt.logs) {
+        try {
+          if (log.topics[0] === spinResultTopic) {
+            const playerFromTopic = log.topics[1] ? ('0x' + log.topics[1].slice(26)) as `0x${string}` : null;
+            if (playerFromTopic?.toLowerCase() === address?.toLowerCase()) {
+              const decoded = decodeAbiParameters(
+                [
+                  { name: 'isWin', type: 'bool' },
+                  { name: 'prizeAmount', type: 'uint256' },
+                  { name: 'prizeType', type: 'string' }
+                ],
+                log.data
+              );
+              const [, prizeAmount, prizeType] = decoded;
+              setPendingPrizeType(prizeType);
+              setWinDetails({
+                amount: formatEther(prizeAmount || 0n),
+                type: prizeType
+              });
+              break;
+            }
+          }
+        } catch {
+        }
+      }
     }
-  }, [spinConfirmed, spinHash, ethPriceUsd, refetchAllBalances]);
+  }, [spinConfirmed, spinHash, spinReceipt, ethPriceUsd, refetchAllBalances, address]);
 
   useEffect(() => {
     if (buyConfirmed && buyHash) {
