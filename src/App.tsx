@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useAccount, useConnect, useDisconnect, useChainId, useWatchContractEvent, useSwitchChain } from 'wagmi';
+import { useAccount, useConnect, useDisconnect, useChainId, useWatchContractEvent, useSwitchChain, useBalance } from 'wagmi';
 import { injected } from 'wagmi/connectors';
 import { useLotteryContract, useRoundDetails, usePendingWinnings, lotteryAbi, CONTRACT_ADDRESS } from './hooks/useTaskContract';
 import { useEthPrice } from './hooks/useEthPrice';
@@ -25,6 +25,35 @@ const WINNER_COUNTS: Record<string, number> = {
   monthly: 1
 };
 
+const WHEEL_SEGMENTS = [
+  { label: '😢', prizeType: 'LOSE', color: '#374151' },
+  { label: '$2', prizeType: '$2', color: '#10b981' },
+  { label: '😢', prizeType: 'LOSE', color: '#4b5563' },
+  { label: '🎟️', prizeType: 'Weekly Ticket', color: '#3b82f6' },
+  { label: '😢', prizeType: 'LOSE', color: '#374151' },
+  { label: '$5', prizeType: '$5', color: '#f59e0b' },
+  { label: '😢', prizeType: 'LOSE', color: '#4b5563' },
+  { label: '🎟️', prizeType: 'Weekly Ticket', color: '#3b82f6' },
+  { label: '😢', prizeType: 'LOSE', color: '#374151' },
+  { label: '$10', prizeType: '$10', color: '#ef4444' },
+];
+
+const getWheelAngleForPrize = (prizeType: string): number => {
+  const segmentAngle = 360 / WHEEL_SEGMENTS.length;
+  const matchingIndices = WHEEL_SEGMENTS
+    .map((seg, i) => seg.prizeType === prizeType ? i : -1)
+    .filter(i => i !== -1);
+  
+  if (matchingIndices.length === 0) {
+    return Math.floor(Math.random() * 360);
+  }
+  
+  const randomMatchIndex = matchingIndices[Math.floor(Math.random() * matchingIndices.length)];
+  const targetAngle = randomMatchIndex * segmentAngle + segmentAngle / 2;
+  const pointerOffset = 90;
+  return 360 - targetAngle + pointerOffset;
+};
+
 function App() {
   const { address, isConnected } = useAccount();
   const { connect } = useConnect();
@@ -46,10 +75,19 @@ function App() {
   const [winDetails, setWinDetails] = useState<{amount: string, type: string} | null>(null);
   const [paymentHistory, setPaymentHistory] = useState<HistoryItem[]>([]);
   const [recentWinners, setRecentWinners] = useState<WinnerRecord[]>([]);
+  const [hasClaimedCurrentWin, setHasClaimedCurrentWin] = useState(false);
+  const [pendingPrizeType, setPendingPrizeType] = useState<string | null>(null);
 
   const processedHash = useRef<string | null>(null);
+  const lastActiveTab = useRef<TabType>('instant');
+  const spinTriggeredByUser = useRef(false);
+  const spinAnimationTriggered = useRef(false);
 
   const { data: claimableAmount, refetch: refetchClaim } = usePendingWinnings(address);
+  
+  const { data: contractBalance } = useBalance({
+    address: CONTRACT_ADDRESS,
+  });
   
   const { data: weeklyDetails } = useRoundDetails(1, true);
   const { data: biweeklyDetails } = useRoundDetails(2, true);
@@ -57,7 +95,6 @@ function App() {
 
   const getRoundData = useCallback(() => {
     if (activeTab === 'weekly' && weeklyDetails) {
-      // Fix: Cast to any or tuple type to allow numerical indexing
       const details = weeklyDetails as any;
       return {
         endTime: Number(details[0]),
@@ -97,6 +134,10 @@ function App() {
     if (sdk?.actions) load(); else setIsSdkLoaded(true);
   }, []);
 
+  useEffect(() => {
+    lastActiveTab.current = activeTab;
+  }, [activeTab]);
+
   useWatchContractEvent({
     address: CONTRACT_ADDRESS,
     abi: lotteryAbi,
@@ -104,10 +145,13 @@ function App() {
     onLogs(logs: any[]) {
       const event = logs[0] as any;
       if (event.args.player === address) {
+        const prizeType = event.args.prizeType;
+        setPendingPrizeType(prizeType);
         setWinDetails({
           amount: formatEther(event.args.prizeAmount || 0n),
-          type: event.args.prizeType
+          type: prizeType
         });
+        setHasClaimedCurrentWin(false);
       }
     },
   });
@@ -155,17 +199,23 @@ function App() {
   });
 
   useEffect(() => {
-    if (isConfirmed && hash && hash !== processedHash.current && activeTab === 'instant') {
-      processedHash.current = hash; 
+    if (isConfirmed && hash && hash !== processedHash.current && activeTab === 'instant' && spinTriggeredByUser.current && pendingPrizeType !== null && !spinAnimationTriggered.current) {
+      processedHash.current = hash;
+      spinTriggeredByUser.current = false;
+      spinAnimationTriggered.current = true;
       setIsSpinning(true);
       
-      const randomDeg = Math.floor(3600 + Math.random() * 360); 
-      setWheelRotation(prev => prev + randomDeg);
+      const targetAngle = getWheelAngleForPrize(pendingPrizeType);
+      const fullSpins = 3600;
+      const finalAngle = fullSpins + targetAngle;
+      setWheelRotation(prev => prev + finalAngle);
 
       setTimeout(() => {
         setIsSpinning(false);
         setShowResultModal(true);
         refetchClaim();
+        spinAnimationTriggered.current = false;
+        setPendingPrizeType(null);
       }, 4500);
 
       const newItem: HistoryItem = {
@@ -176,7 +226,7 @@ function App() {
       };
       setPaymentHistory(prev => [newItem, ...prev].slice(0, 50));
     }
-  }, [isConfirmed, hash, activeTab, refetchClaim]);
+  }, [isConfirmed, hash, activeTab, refetchClaim, ethPriceUsd, pendingPrizeType]);
 
   const getEthAmount = useCallback(() => {
     if (manualEthInput && parseFloat(manualEthInput) > 0) {
@@ -186,10 +236,12 @@ function App() {
                      activeTab === 'biweekly' ? PRICES.BIWEEKLY : 
                      activeTab === 'monthly' ? PRICES.MONTHLY : 0;
     if (priceUSD > 0) {
-      return ((priceUSD * ticketCount) / ethPriceUsd).toFixed(18);
+      const rawAmount = (priceUSD * ticketCount) / ethPriceUsd;
+      const bufferedAmount = rawAmount * 1.01;
+      return bufferedAmount.toFixed(18);
     }
     return "0";
-  }, [ticketCount, activeTab, manualEthInput]);
+  }, [ticketCount, activeTab, manualEthInput, ethPriceUsd]);
 
   const ethAmount = getEthAmount();
 
@@ -208,38 +260,46 @@ function App() {
 
   const handleSpin = async () => {
     if (!await ensureNetwork()) return; 
-    if (!writeContract || !address) return; // Fix: Check for address
+    if (!writeContract || !address) return;
 
     setShowResultModal(false);
     setWinDetails(null);
+    setHasClaimedCurrentWin(false);
+    spinTriggeredByUser.current = true;
     
-    const cost = (PRICES.INSTANT / ethPriceUsd).toFixed(18);
+    const rawCost = PRICES.INSTANT / ethPriceUsd;
+    const bufferedCost = rawCost * 1.01;
+    const cost = bufferedCost.toFixed(18);
+    
     writeContract({
       address: CONTRACT_ADDRESS,
       abi: lotteryAbi,
       functionName: 'spinWheel',
       args: [],
       value: parseEther(cost.toString()), 
-      account: address, // Fix: Added account property
+      account: address,
     });
   };
 
   const handleClaim = async () => {
     if (!await ensureNetwork()) return;
-    if (!writeContract || !address) return; // Fix: Check for address
+    if (!writeContract || !address) return;
+    
     writeContract({
       address: CONTRACT_ADDRESS,
       abi: lotteryAbi,
       functionName: 'claimPrize',
       args: [],
-      account: address, // Fix: Added account property
+      account: address,
     });
+    
+    setHasClaimedCurrentWin(true);
     setShowResultModal(false);
   };
 
   const handleBuyTicket = async () => {
     if (!await ensureNetwork()) return;
-    if (!writeContract || !address) return; // Fix: Check for address
+    if (!writeContract || !address) return;
     
     const typeId = LOTTERY_TYPE_MAP[activeTab] || 1;
 
@@ -249,7 +309,7 @@ function App() {
       functionName: 'buyTicket',
       args: [typeId, BigInt(ticketCount)], 
       value: parseEther(ethAmount),
-      account: address, // Fix: Added account property
+      account: address,
     });
   };
 
@@ -308,8 +368,9 @@ function App() {
     );
   }
 
-  // Fix: Cast claimableAmount to bigint for safe comparison and formatting
   const safeClaimableAmount = claimableAmount as unknown as bigint;
+  const prizePoolEth = contractBalance ? Number(formatEther(contractBalance.value)).toFixed(6) : '0';
+  const prizePoolUsd = contractBalance ? (Number(formatEther(contractBalance.value)) * ethPriceUsd).toFixed(2) : '0';
 
   return (
     <div className="app-container">
@@ -341,7 +402,7 @@ function App() {
           </div>
         )}
 
-       {safeClaimableAmount > 0n && (
+       {safeClaimableAmount > 0n && !hasClaimedCurrentWin && (
   <div className="claim-banner">
     <div className="claim-info">
       <span className="money-icon">💰</span>
@@ -384,30 +445,54 @@ function App() {
                   {priceLoading && <span className="price-loading"> (updating...)</span>}
                 </p>
               </div>
-              
-              <div className="wheel-wrapper">
-                <div className="wheel-glow"></div>
-                <div className="wheel-pointer">▼</div>
-                <div className="wheel" style={{ transform: `rotate(${wheelRotation}deg)` }}>
-                  <div className="segment" style={{ '--i': 1 } as React.CSSProperties}><span>😢</span></div>
-                  <div className="segment" style={{ '--i': 2 } as React.CSSProperties}><span>$2</span></div>
-                  <div className="segment" style={{ '--i': 3 } as React.CSSProperties}><span>😢</span></div>
-                  <div className="segment" style={{ '--i': 4 } as React.CSSProperties}><span>🎟️</span></div>
-                  <div className="segment" style={{ '--i': 5 } as React.CSSProperties}><span>😢</span></div>
-                  <div className="segment" style={{ '--i': 6 } as React.CSSProperties}><span>$5</span></div>
-                  <div className="segment" style={{ '--i': 7 } as React.CSSProperties}><span>😢</span></div>
-                  <div className="segment" style={{ '--i': 8 } as React.CSSProperties}><span>🎫</span></div>
-                  <div className="segment" style={{ '--i': 9 } as React.CSSProperties}><span>😢</span></div>
-                  <div className="segment" style={{ '--i': 10 } as React.CSSProperties}><span>$10</span></div>
+
+              <div className="prize-pool-display">
+                <span className="pool-icon">💎</span>
+                <div className="pool-info">
+                  <span className="pool-label">Prize Pool</span>
+                  <span className="pool-value">{prizePoolEth} ETH</span>
+                  <span className="pool-usd">≈ ${prizePoolUsd}</span>
                 </div>
-                <div className="wheel-center">
-                  <span>🎰</span>
+              </div>
+              
+              <div className="wheel-container">
+                <div className="wheel-outer-ring">
+                  <div className="wheel-lights">
+                    {Array.from({ length: 24 }).map((_, i) => (
+                      <div key={i} className={`wheel-light ${isSpinning ? 'spinning' : ''}`} style={{ '--light-index': i } as React.CSSProperties} />
+                    ))}
+                  </div>
+                  <div className="wheel-wrapper">
+                    <div className="wheel-pointer-container">
+                      <div className="wheel-pointer">▼</div>
+                    </div>
+                    <div className="wheel" style={{ transform: `rotate(${wheelRotation}deg)` }}>
+                      {WHEEL_SEGMENTS.map((segment, i) => (
+                        <div 
+                          key={i} 
+                          className="segment" 
+                          style={{ 
+                            '--i': i + 1,
+                            '--segment-color': segment.color,
+                            '--total-segments': WHEEL_SEGMENTS.length
+                          } as React.CSSProperties}
+                        >
+                          <span className="segment-label">{segment.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="wheel-center">
+                      <div className="wheel-center-inner">
+                        <span>🎰</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
 
               <div className="prize-legend">
                 <div className="legend-item"><span className="dot green"></span> $2-$10 Cash</div>
-                <div className="legend-item"><span className="dot blue"></span> Free Tickets</div>
+                <div className="legend-item"><span className="dot blue"></span> Weekly Ticket</div>
                 <div className="legend-item"><span className="dot gray"></span> Try Again</div>
               </div>
               
@@ -653,7 +738,7 @@ function App() {
           )}
         </main>
 
-        {showResultModal && (
+        {showResultModal && !hasClaimedCurrentWin && (
           <div className="modal-overlay" onClick={() => setShowResultModal(false)}>
             <div className="modal-content" onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
