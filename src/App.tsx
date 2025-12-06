@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useAccount, useConnect, useDisconnect, useChainId, useWatchContractEvent, useSwitchChain, useBalance } from 'wagmi';
+import { useAccount, useConnect, useDisconnect, useChainId, useWatchContractEvent, useSwitchChain, useBalance, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { injected } from 'wagmi/connectors';
-import { useLotteryContract, useRoundDetails, usePendingWinnings, lotteryAbi, CONTRACT_ADDRESS } from './hooks/useTaskContract';
+import { useRoundDetails, usePendingWinnings, lotteryAbi, CONTRACT_ADDRESS } from './hooks/useTaskContract';
 import { useEthPrice } from './hooks/useEthPrice';
 import { parseEther, formatEther } from 'viem';
 import sdk from '@farcaster/miniapp-sdk';
@@ -61,7 +61,15 @@ function App() {
   const chainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
 
-  const { writeContract, isPending, isConfirming, isConfirmed, hash } = useLotteryContract();
+  const { writeContract: writeSpinContract, data: spinHash, isPending: spinPending } = useWriteContract();
+  const { isLoading: spinConfirming, isSuccess: spinConfirmed } = useWaitForTransactionReceipt({ hash: spinHash });
+
+  const { writeContract: writeClaimContract, data: claimHash, isPending: claimPending } = useWriteContract();
+  const { isLoading: claimConfirming, isSuccess: claimConfirmed } = useWaitForTransactionReceipt({ hash: claimHash });
+
+  const { writeContract: writeBuyContract, data: buyHash, isPending: buyPending } = useWriteContract();
+  const { isLoading: buyConfirming, isSuccess: buyConfirmed } = useWaitForTransactionReceipt({ hash: buyHash });
+
   const { price: ethPriceUsd, isLoading: priceLoading } = useEthPrice();
 
   const [activeTab, setActiveTab] = useState<TabType>('instant');
@@ -75,23 +83,31 @@ function App() {
   const [winDetails, setWinDetails] = useState<{amount: string, type: string} | null>(null);
   const [paymentHistory, setPaymentHistory] = useState<HistoryItem[]>([]);
   const [recentWinners, setRecentWinners] = useState<WinnerRecord[]>([]);
-  const [hasClaimedCurrentWin, setHasClaimedCurrentWin] = useState(false);
   const [pendingPrizeType, setPendingPrizeType] = useState<string | null>(null);
+  const [isClaimInProgress, setIsClaimInProgress] = useState(false);
 
-  const processedHash = useRef<string | null>(null);
-  const lastActiveTab = useRef<TabType>('instant');
-  const spinTriggeredByUser = useRef(false);
+  const processedSpinHash = useRef<string | null>(null);
+  const processedClaimHash = useRef<string | null>(null);
   const spinAnimationTriggered = useRef(false);
+  const spinStartRotation = useRef(0);
 
   const { data: claimableAmount, refetch: refetchClaim } = usePendingWinnings(address);
   
-  const { data: contractBalance } = useBalance({
+  const { data: contractBalance, refetch: refetchBalance } = useBalance({
     address: CONTRACT_ADDRESS,
   });
   
-  const { data: weeklyDetails } = useRoundDetails(1, true);
-  const { data: biweeklyDetails } = useRoundDetails(2, true);
-  const { data: monthlyDetails } = useRoundDetails(3, true);
+  const { data: weeklyDetails, refetch: refetchWeekly } = useRoundDetails(1, true);
+  const { data: biweeklyDetails, refetch: refetchBiweekly } = useRoundDetails(2, true);
+  const { data: monthlyDetails, refetch: refetchMonthly } = useRoundDetails(3, true);
+
+  const refetchAllBalances = useCallback(() => {
+    refetchBalance();
+    refetchClaim();
+    refetchWeekly();
+    refetchBiweekly();
+    refetchMonthly();
+  }, [refetchBalance, refetchClaim, refetchWeekly, refetchBiweekly, refetchMonthly]);
 
   const getRoundData = useCallback(() => {
     if (activeTab === 'weekly' && weeklyDetails) {
@@ -134,10 +150,6 @@ function App() {
     if (sdk?.actions) load(); else setIsSdkLoaded(true);
   }, []);
 
-  useEffect(() => {
-    lastActiveTab.current = activeTab;
-  }, [activeTab]);
-
   useWatchContractEvent({
     address: CONTRACT_ADDRESS,
     abi: lotteryAbi,
@@ -151,7 +163,6 @@ function App() {
           amount: formatEther(event.args.prizeAmount || 0n),
           type: prizeType
         });
-        setHasClaimedCurrentWin(false);
       }
     },
   });
@@ -171,6 +182,7 @@ function App() {
           hash: logs[0].transactionHash || ''
         };
         setPaymentHistory(prev => [newItem, ...prev].slice(0, 50));
+        refetchAllBalances();
       }
     },
   });
@@ -193,40 +205,71 @@ function App() {
           date: new Date().toLocaleDateString()
         }));
         setRecentWinners(prev => [...newWinners, ...prev].slice(0, 20));
-        refetchClaim();
+        refetchAllBalances();
+      }
+    },
+  });
+
+  useWatchContractEvent({
+    address: CONTRACT_ADDRESS,
+    abi: lotteryAbi,
+    eventName: 'WinningsClaimed',
+    onLogs(logs: any[]) {
+      const event = logs[0] as any;
+      if (event.args.user === address) {
+        refetchAllBalances();
+        setIsClaimInProgress(false);
       }
     },
   });
 
   useEffect(() => {
-    if (isConfirmed && hash && hash !== processedHash.current && activeTab === 'instant' && spinTriggeredByUser.current && pendingPrizeType !== null && !spinAnimationTriggered.current) {
-      processedHash.current = hash;
-      spinTriggeredByUser.current = false;
+    if (claimConfirmed && claimHash && claimHash !== processedClaimHash.current) {
+      processedClaimHash.current = claimHash;
+      setIsClaimInProgress(false);
+      refetchAllBalances();
+    }
+  }, [claimConfirmed, claimHash, refetchAllBalances]);
+
+  useEffect(() => {
+    if (isSpinning && pendingPrizeType !== null && !spinAnimationTriggered.current) {
       spinAnimationTriggered.current = true;
-      setIsSpinning(true);
       
       const targetAngle = getWheelAngleForPrize(pendingPrizeType);
       const fullSpins = 3600;
-      const finalAngle = fullSpins + targetAngle;
-      setWheelRotation(prev => prev + finalAngle);
+      const finalAngle = spinStartRotation.current + fullSpins + targetAngle;
+      setWheelRotation(finalAngle);
 
       setTimeout(() => {
         setIsSpinning(false);
         setShowResultModal(true);
-        refetchClaim();
+        refetchAllBalances();
         spinAnimationTriggered.current = false;
         setPendingPrizeType(null);
       }, 4500);
+    }
+  }, [isSpinning, pendingPrizeType, refetchAllBalances]);
 
+  useEffect(() => {
+    if (spinConfirmed && spinHash && spinHash !== processedSpinHash.current) {
+      processedSpinHash.current = spinHash;
+      
       const newItem: HistoryItem = {
         type: 'Spin',
         amount: (PRICES.INSTANT / ethPriceUsd).toFixed(18),
         date: new Date().toLocaleDateString(),
-        hash: hash
+        hash: spinHash
       };
       setPaymentHistory(prev => [newItem, ...prev].slice(0, 50));
+      refetchAllBalances();
     }
-  }, [isConfirmed, hash, activeTab, refetchClaim, ethPriceUsd, pendingPrizeType]);
+  }, [spinConfirmed, spinHash, ethPriceUsd, refetchAllBalances]);
+
+  useEffect(() => {
+    if (buyConfirmed && buyHash) {
+      refetchAllBalances();
+    }
+  }, [buyConfirmed, buyHash, refetchAllBalances]);
 
   const getEthAmount = useCallback(() => {
     if (manualEthInput && parseFloat(manualEthInput) > 0) {
@@ -260,18 +303,22 @@ function App() {
 
   const handleSpin = async () => {
     if (!await ensureNetwork()) return; 
-    if (!writeContract || !address) return;
+    if (!writeSpinContract || !address) return;
 
     setShowResultModal(false);
     setWinDetails(null);
-    setHasClaimedCurrentWin(false);
-    spinTriggeredByUser.current = true;
+    setPendingPrizeType(null);
+    spinAnimationTriggered.current = false;
+    processedSpinHash.current = null;
+    
+    spinStartRotation.current = wheelRotation;
+    setIsSpinning(true);
     
     const rawCost = PRICES.INSTANT / ethPriceUsd;
     const bufferedCost = rawCost * 1.01;
     const cost = bufferedCost.toFixed(18);
     
-    writeContract({
+    writeSpinContract({
       address: CONTRACT_ADDRESS,
       abi: lotteryAbi,
       functionName: 'spinWheel',
@@ -283,27 +330,28 @@ function App() {
 
   const handleClaim = async () => {
     if (!await ensureNetwork()) return;
-    if (!writeContract || !address) return;
+    if (!writeClaimContract || !address) return;
+    if (isClaimInProgress || claimPending || claimConfirming) return;
     
-    writeContract({
+    setIsClaimInProgress(true);
+    processedClaimHash.current = null;
+    
+    writeClaimContract({
       address: CONTRACT_ADDRESS,
       abi: lotteryAbi,
       functionName: 'claimPrize',
       args: [],
       account: address,
     });
-    
-    setHasClaimedCurrentWin(true);
-    setShowResultModal(false);
   };
 
   const handleBuyTicket = async () => {
     if (!await ensureNetwork()) return;
-    if (!writeContract || !address) return;
+    if (!writeBuyContract || !address) return;
     
     const typeId = LOTTERY_TYPE_MAP[activeTab] || 1;
 
-    writeContract({
+    writeBuyContract({
       address: CONTRACT_ADDRESS,
       abi: lotteryAbi,
       functionName: 'buyTicket',
@@ -368,9 +416,15 @@ function App() {
     );
   }
 
-  const safeClaimableAmount = claimableAmount as unknown as bigint;
+  const safeClaimableAmount = (claimableAmount as unknown as bigint) || 0n;
+  const hasClaimable = safeClaimableAmount > 0n;
   const prizePoolEth = contractBalance ? Number(formatEther(contractBalance.value)).toFixed(6) : '0';
   const prizePoolUsd = contractBalance ? (Number(formatEther(contractBalance.value)) * ethPriceUsd).toFixed(2) : '0';
+
+  const isClaimButtonDisabled = claimPending || claimConfirming || isClaimInProgress;
+  const claimButtonText = claimPending ? 'Check Wallet...' : 
+                          claimConfirming ? 'Confirming...' : 
+                          isClaimInProgress ? 'Processing...' : 'CLAIM NOW';
 
   return (
     <div className="app-container">
@@ -402,23 +456,27 @@ function App() {
           </div>
         )}
 
-       {safeClaimableAmount > 0n && !hasClaimedCurrentWin && (
-  <div className="claim-banner">
-    <div className="claim-info">
-      <span className="money-icon">💰</span>
-      <div>
-        <p className="claim-title">Pending Winnings</p>
-        <p className="claim-amount">{Number(formatEther(safeClaimableAmount)).toFixed(6)} ETH</p>
-        <p className="claim-usd">
-          ≈ ${(Number(formatEther(safeClaimableAmount)) * ethPriceUsd).toFixed(2)}
-        </p>
-      </div>
-    </div>
-    <button onClick={handleClaim} className="claim-btn-inline pulse-anim" disabled={isPending}>
-      CLAIM NOW
-    </button>
-  </div>
-)}
+        {hasClaimable && (
+          <div className="claim-banner">
+            <div className="claim-info">
+              <span className="money-icon">💰</span>
+              <div>
+                <p className="claim-title">Pending Winnings</p>
+                <p className="claim-amount">{Number(formatEther(safeClaimableAmount)).toFixed(6)} ETH</p>
+                <p className="claim-usd">
+                  ≈ ${(Number(formatEther(safeClaimableAmount)) * ethPriceUsd).toFixed(2)}
+                </p>
+              </div>
+            </div>
+            <button 
+              onClick={handleClaim} 
+              className={`claim-btn-inline ${!isClaimButtonDisabled ? 'pulse-anim' : ''}`} 
+              disabled={isClaimButtonDisabled}
+            >
+              {claimButtonText}
+            </button>
+          </div>
+        )}
 
         <nav className="nav-tabs">
           {(['instant', 'weekly', 'biweekly', 'monthly', 'history'] as TabType[]).map((tab) => (
@@ -456,34 +514,57 @@ function App() {
               </div>
               
               <div className="wheel-container">
-                <div className="wheel-outer-ring">
-                  <div className="wheel-lights">
-                    {Array.from({ length: 24 }).map((_, i) => (
-                      <div key={i} className={`wheel-light ${isSpinning ? 'spinning' : ''}`} style={{ '--light-index': i } as React.CSSProperties} />
-                    ))}
-                  </div>
-                  <div className="wheel-wrapper">
-                    <div className="wheel-pointer-container">
-                      <div className="wheel-pointer">▼</div>
-                    </div>
-                    <div className="wheel" style={{ transform: `rotate(${wheelRotation}deg)` }}>
-                      {WHEEL_SEGMENTS.map((segment, i) => (
+                <div className="wheel-stage">
+                  <div className="wheel-glow-effect"></div>
+                  <div className="wheel-frame">
+                    <div className="wheel-bulbs">
+                      {Array.from({ length: 20 }).map((_, i) => (
                         <div 
                           key={i} 
-                          className="segment" 
-                          style={{ 
-                            '--i': i + 1,
-                            '--segment-color': segment.color,
-                            '--total-segments': WHEEL_SEGMENTS.length
-                          } as React.CSSProperties}
-                        >
-                          <span className="segment-label">{segment.label}</span>
-                        </div>
+                          className={`bulb ${isSpinning ? 'chase' : 'idle'}`} 
+                          style={{ '--bulb-index': i } as React.CSSProperties} 
+                        />
                       ))}
                     </div>
-                    <div className="wheel-center">
-                      <div className="wheel-center-inner">
-                        <span>🎰</span>
+                    <div className="wheel-inner">
+                      <div className="wheel-pointer-arrow">
+                        <svg viewBox="0 0 40 50" className="pointer-svg">
+                          <defs>
+                            <linearGradient id="pointerGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                              <stop offset="0%" stopColor="#fbbf24" />
+                              <stop offset="100%" stopColor="#f59e0b" />
+                            </linearGradient>
+                            <filter id="pointerShadow">
+                              <feDropShadow dx="0" dy="2" stdDeviation="3" floodOpacity="0.5"/>
+                            </filter>
+                          </defs>
+                          <polygon points="20,50 0,0 40,0" fill="url(#pointerGrad)" filter="url(#pointerShadow)"/>
+                          <polygon points="20,45 5,5 35,5" fill="#fcd34d"/>
+                        </svg>
+                      </div>
+                      <div className={`wheel-disc ${isSpinning ? 'spinning-active' : ''}`} style={{ transform: `rotate(${wheelRotation}deg)` }}>
+                        {WHEEL_SEGMENTS.map((segment, i) => (
+                          <div 
+                            key={i} 
+                            className="wheel-segment" 
+                            style={{ 
+                              '--segment-index': i,
+                              '--segment-color': segment.color,
+                            } as React.CSSProperties}
+                          >
+                            <span className="segment-text">{segment.label}</span>
+                          </div>
+                        ))}
+                        <div className="wheel-dividers">
+                          {Array.from({ length: 10 }).map((_, i) => (
+                            <div key={i} className="divider" style={{ '--div-index': i } as React.CSSProperties} />
+                          ))}
+                        </div>
+                      </div>
+                      <div className="wheel-hub">
+                        <div className="hub-inner">
+                          <span className="hub-icon">⭐</span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -499,7 +580,7 @@ function App() {
               <div className="action-group">
                 <button 
                   className={`action-btn spin-btn ${isSpinning ? 'spinning' : ''}`}
-                  disabled={!isConnected || isPending || isConfirming || isSpinning}
+                  disabled={!isConnected || spinPending || spinConfirming || isSpinning}
                   onClick={handleSpin}
                 >
                   {isSpinning ? (
@@ -507,9 +588,9 @@ function App() {
                       <span className="btn-spinner"></span>
                       Spinning...
                     </>
-                  ) : isPending ? (
+                  ) : spinPending ? (
                     'Check Wallet...'
-                  ) : isConfirming ? (
+                  ) : spinConfirming ? (
                     'Confirming...'
                   ) : (
                     <>
@@ -598,10 +679,9 @@ function App() {
               <div className="ticket-purchase-section">
                 <div className="price-info">
                   <span className="ticket-icon">🎟️</span>
-                  <span>${PRICES[activeTab.toUpperCase() as keyof typeof PRICES]} per ticket</span>
-                  <span className="eth-price">(≈{(PRICES[activeTab.toUpperCase() as keyof typeof PRICES] / ethPriceUsd).toFixed(6)} ETH)</span>
+                  <span>${activeTab === 'weekly' ? PRICES.WEEKLY : activeTab === 'biweekly' ? PRICES.BIWEEKLY : PRICES.MONTHLY} per ticket</span>
+                  <span className="eth-price">(≈{((activeTab === 'weekly' ? PRICES.WEEKLY : activeTab === 'biweekly' ? PRICES.BIWEEKLY : PRICES.MONTHLY) / ethPriceUsd).toFixed(6)} ETH)</span>
                 </div>
-
                 <div className="ticket-slider-section">
                   <div className="slider-header">
                     <label>Number of Tickets: <strong>{ticketCount}</strong></label>
@@ -611,10 +691,10 @@ function App() {
                     min="1" 
                     max="50" 
                     value={ticketCount} 
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                    onChange={(e) => {
                       setTicketCount(parseInt(e.target.value));
                       setManualEthInput("");
-                    }} 
+                    }}
                     className="ticket-slider"
                   />
                   <div className="slider-labels">
@@ -623,80 +703,68 @@ function App() {
                     <span>50</span>
                   </div>
                 </div>
-
                 <div className="manual-input-section">
                   <label>Or enter ETH amount:</label>
                   <div className="eth-input-wrapper">
                     <input 
-                      type="number"
+                      type="number" 
                       step="0.0001"
-                      placeholder="0.00"
+                      placeholder="0.0"
                       value={manualEthInput}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleManualEthChange(e.target.value)}
+                      onChange={(e) => handleManualEthChange(e.target.value)}
                       className="eth-input"
                     />
                     <span className="eth-suffix">ETH</span>
                   </div>
                 </div>
-
                 <div className="total-section">
                   <div className="total-row">
                     <span>Total Cost:</span>
                     <div className="total-amount">
-                      <span className="eth-total">{Number(ethAmount).toFixed(6)} ETH</span>
+                      <span className="eth-total">{parseFloat(ethAmount).toFixed(6)} ETH</span>
                       <span className="usd-total">≈ ${(parseFloat(ethAmount) * ethPriceUsd).toFixed(2)}</span>
                     </div>
                   </div>
                 </div>
+              </div>
 
+              <div className="action-group">
                 <button 
-                  className="action-btn buy-btn" 
-                  disabled={!isConnected || isPending || isConfirming}
+                  className="action-btn buy-btn"
+                  disabled={!isConnected || buyPending || buyConfirming}
                   onClick={handleBuyTicket}
                 >
-                  {isPending ? 'Check Wallet...' : isConfirming ? 'Confirming...' : (
+                  {buyPending ? (
+                    'Check Wallet...'
+                  ) : buyConfirming ? (
+                    'Confirming...'
+                  ) : (
                     <>
                       <span className="btn-icon">🎟️</span>
-                      Buy {ticketCount} Ticket{ticketCount > 1 ? 's' : ''}
+                      BUY {ticketCount} TICKET{ticketCount > 1 ? 'S' : ''}
                     </>
                   )}
                 </button>
               </div>
 
-              <div className="winners-section">
-                <div className="winners-header">
-                  <span className="trophy-icon">🏆</span>
+              {recentWinners.filter(w => w.lotteryType.toLowerCase() === activeTab).length > 0 && (
+                <div className="winners-section">
                   <h3>Recent Winners</h3>
-                </div>
-                {recentWinners.filter(w => w.lotteryType.toLowerCase() === activeTab).length === 0 ? (
-                  <div className="no-winners">
-                    <p>No winners yet for this lottery</p>
-                    <p className="small-text">Winners will be displayed after the draw</p>
-                  </div>
-                ) : (
                   <div className="winners-list">
                     {recentWinners
                       .filter(w => w.lotteryType.toLowerCase() === activeTab)
-                      .slice(0, 6)
-                      .map((winner, idx) => (
-                        <div key={idx} className={`winner-item ${winner.address === address ? 'is-you' : ''}`}>
-                          <div className="winner-left">
-                            <span className="winner-rank">#{idx + 1}</span>
-                            <span className="winner-address">
-                              {winner.address === address ? '🎉 You!' : `${winner.address.slice(0, 6)}...${winner.address.slice(-4)}`}
-                            </span>
-                          </div>
-                          <div className="winner-right">
-                            <span className="winner-prize">{parseFloat(winner.prize).toFixed(6)} ETH</span>
-                            {winner.address === address && (
-                              <button onClick={handleClaim} className="mini-claim-btn">Claim</button>
-                            )}
-                          </div>
+                      .slice(0, 5)
+                      .map((winner, i) => (
+                        <div key={i} className={`winner-item ${winner.address === address ? 'is-you' : ''}`}>
+                          <span className="winner-address">
+                            {winner.address === address ? '🎉 You!' : `${winner.address.slice(0, 6)}...${winner.address.slice(-4)}`}
+                          </span>
+                          <span className="winner-prize">{parseFloat(winner.prize).toFixed(6)} ETH</span>
                         </div>
                       ))}
                   </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -704,24 +772,23 @@ function App() {
             <div className="tab-content fade-in">
               <div className="history-header">
                 <h2>Payment History</h2>
-                <p className="subtitle">Your recent transactions</p>
               </div>
               
               {paymentHistory.length === 0 ? (
                 <div className="empty-history">
                   <span className="empty-icon">📭</span>
                   <p>No transactions yet</p>
-                  <p className="subtitle">Your payments will appear here</p>
+                  <p className="small-text">Your lottery purchases will appear here</p>
                 </div>
               ) : (
                 <div className="history-list">
-                  {paymentHistory.map((item, index) => (
-                    <div key={index} className="history-item">
+                  {paymentHistory.map((item, i) => (
+                    <div key={i} className="history-item">
                       <div className="history-left">
                         <span className="history-type-icon">
                           {item.type === 'Spin' ? '🎡' : '🎟️'}
                         </span>
-                        <div className="history-details">
+                        <div>
                           <p className="history-type">{item.type}</p>
                           <p className="history-date">{item.date}</p>
                         </div>
@@ -738,36 +805,34 @@ function App() {
           )}
         </main>
 
-        {showResultModal && !hasClaimedCurrentWin && (
+        {showResultModal && winDetails && (
           <div className="modal-overlay" onClick={() => setShowResultModal(false)}>
             <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-              <div className="modal-header">
-                <h2>🎲 Spin Result</h2>
-              </div>
-              {winDetails && winDetails.type !== 'LOSE' ? (
+              {winDetails.type !== 'LOSE' ? (
                 <div className="win-result">
-                  <div className="confetti-effect">🎉</div>
-                  <div className="result-emoji">🎁</div>
-                  <p className="win-title">Congratulations!</p>
-                  <p className="win-text">You Won: <span className="highlight">{winDetails.type}</span></p>
+                  <span className="confetti-effect">🎊</span>
+                  <span className="result-emoji">🎉</span>
+                  <h3 className="win-title">Congratulations!</h3>
+                  <p className="win-text">You won <span className="highlight">{winDetails.type}</span>!</p>
                   {parseFloat(winDetails.amount) > 0 && (
                     <p className="win-amount">{parseFloat(winDetails.amount).toFixed(6)} ETH</p>
                   )}
-                  <button onClick={handleClaim} className="action-btn claim-btn mt-2">
-                    💰 CLAIM NOW
-                  </button>
+                  {hasClaimable && (
+                    <button onClick={handleClaim} className="action-btn claim-btn" disabled={isClaimButtonDisabled}>
+                      {claimButtonText}
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="lose-result">
-                  <div className="result-emoji">💨</div>
-                  <p className="lose-title">No luck this time!</p>
-                  <p className="small-text">Your entry helps grow the prize pool</p>
-                  <button onClick={handleSpin} className="action-btn spin-btn mt-2" disabled={isPending}>
-                    🔄 Try Again
-                  </button>
+                  <span className="result-emoji">😢</span>
+                  <h3 className="lose-title">Better luck next time!</h3>
+                  <p className="small-text">Try again for a chance to win!</p>
                 </div>
               )}
-              <button onClick={() => setShowResultModal(false)} className="close-btn mt-4">Close</button>
+              <button onClick={() => setShowResultModal(false)} className="close-btn">
+                Close
+              </button>
             </div>
           </div>
         )}
