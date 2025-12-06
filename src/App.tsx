@@ -85,6 +85,7 @@ function App() {
   const [recentWinners, setRecentWinners] = useState<WinnerRecord[]>([]);
   const [pendingPrizeType, setPendingPrizeType] = useState<string | null>(null);
   const [isClaimInProgress, setIsClaimInProgress] = useState(false);
+  const [spinError, setSpinError] = useState<string | null>(null);
 
   const processedSpinHash = useRef<string | null>(null);
   const processedClaimHash = useRef<string | null>(null);
@@ -250,6 +251,21 @@ function App() {
     }
   }, [isSpinning, pendingPrizeType, refetchAllBalances]);
 
+  // Timeout fallback - if no result after 30s, reset spinning state and show error
+  useEffect(() => {
+    if (isSpinning && pendingPrizeType === null) {
+      const timeout = setTimeout(() => {
+        if (isSpinning && pendingPrizeType === null) {
+          setIsSpinning(false);
+          spinAnimationTriggered.current = false;
+          setWheelRotation(spinStartRotation.current); // Reset wheel to previous position
+          setSpinError('Transaction timed out. Please try again.');
+        }
+      }, 30000);
+      return () => clearTimeout(timeout);
+    }
+  }, [isSpinning, pendingPrizeType]);
+
   useEffect(() => {
     if (spinConfirmed && spinHash && spinHash !== processedSpinHash.current) {
       processedSpinHash.current = spinHash;
@@ -308,6 +324,7 @@ function App() {
     setShowResultModal(false);
     setWinDetails(null);
     setPendingPrizeType(null);
+    setSpinError(null);
     spinAnimationTriggered.current = false;
     processedSpinHash.current = null;
     
@@ -526,23 +543,23 @@ function App() {
                         />
                       ))}
                     </div>
+                    <div className="wheel-pointer-arrow">
+                      <svg viewBox="0 0 40 50" className="pointer-svg">
+                        <defs>
+                          <linearGradient id="pointerGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" stopColor="#fbbf24" />
+                            <stop offset="100%" stopColor="#f59e0b" />
+                          </linearGradient>
+                          <filter id="pointerShadow">
+                            <feDropShadow dx="0" dy="2" stdDeviation="3" floodOpacity="0.5"/>
+                          </filter>
+                        </defs>
+                        <polygon points="20,50 0,0 40,0" fill="url(#pointerGrad)" filter="url(#pointerShadow)"/>
+                        <polygon points="20,45 5,5 35,5" fill="#fcd34d"/>
+                      </svg>
+                    </div>
                     <div className="wheel-inner">
-                      <div className="wheel-pointer-arrow">
-                        <svg viewBox="0 0 40 50" className="pointer-svg">
-                          <defs>
-                            <linearGradient id="pointerGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                              <stop offset="0%" stopColor="#fbbf24" />
-                              <stop offset="100%" stopColor="#f59e0b" />
-                            </linearGradient>
-                            <filter id="pointerShadow">
-                              <feDropShadow dx="0" dy="2" stdDeviation="3" floodOpacity="0.5"/>
-                            </filter>
-                          </defs>
-                          <polygon points="20,50 0,0 40,0" fill="url(#pointerGrad)" filter="url(#pointerShadow)"/>
-                          <polygon points="20,45 5,5 35,5" fill="#fcd34d"/>
-                        </svg>
-                      </div>
-                      <div className={`wheel-disc ${isSpinning ? 'spinning-active' : ''}`} style={{ transform: `rotate(${wheelRotation}deg)` }}>
+                      <div className={`wheel-disc ${isSpinning && pendingPrizeType === null ? 'spinning-waiting' : ''} ${isSpinning && pendingPrizeType !== null ? 'spinning-active' : ''}`} style={pendingPrizeType !== null || !isSpinning ? { transform: `rotate(${wheelRotation}deg)` } : undefined}>
                         {WHEEL_SEGMENTS.map((segment, i) => (
                           <div 
                             key={i} 
@@ -599,6 +616,12 @@ function App() {
                     </>
                   )}
                 </button>
+                {spinError && (
+                  <div className="spin-error">
+                    <span className="error-icon">⚠️</span>
+                    {spinError}
+                  </div>
+                )}
               </div>
             </div>
           )}

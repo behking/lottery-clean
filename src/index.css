@@ -726,6 +726,24 @@ body {
   to { transform: rotate(360deg); }
 }
 
+.spin-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 10px;
+  padding: 12px;
+  color: #fca5a5;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.error-icon {
+  font-size: 1rem;
+}
+
 .empty-history {
   text-align: center;
   padding: 40px 20px;
@@ -1295,6 +1313,16 @@ body {
 
 .wheel-disc.spinning-active {
   filter: brightness(1.1) saturate(1.2);
+}
+
+.wheel-disc.spinning-waiting {
+  animation: wheel-spin-waiting 0.5s linear infinite;
+  filter: brightness(1.1) saturate(1.2);
+}
+
+@keyframes wheel-spin-waiting {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .wheel-segment {
