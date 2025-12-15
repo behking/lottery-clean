@@ -473,7 +473,7 @@ function App() {
       <div className="loading-screen">
         <div className="loader-content">
           <div className="spinner"></div>
-          <p>Loading Startale Lotto...</p>
+          <p>Loading Star Lottery...</p>
         </div>
       </div>
     );
@@ -496,7 +496,7 @@ function App() {
         <header className="header">
           <div className="logo-section">
             <span className="logo-icon">🎰</span>
-            <h1>Startale Lotto</h1>
+            <h1>Star Lottery</h1>
           </div>
           {isConnected ? (
             <button onClick={() => disconnect()} className="wallet-btn disconnect">
