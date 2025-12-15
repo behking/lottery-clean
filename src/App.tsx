@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useAccount, useConnect, useDisconnect, useChainId, useWatchContractEvent, useSwitchChain, useBalance, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useConnect, useDisconnect, useWatchContractEvent, useSwitchChain, useBalance, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { injected } from 'wagmi/connectors';
 import { useRoundDetails, usePendingWinnings, lotteryAbi, CONTRACT_ADDRESS } from './hooks/useTaskContract';
 import { useEthPrice } from './hooks/useEthPrice';
@@ -57,19 +57,18 @@ const getWheelAngleForPrize = (prizeType: string): number => {
 };
 
 function App() {
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, chainId } = useAccount();
   const { connect } = useConnect();
   const { disconnect } = useDisconnect();
-  const chainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
 
-  const { writeContract: writeSpinContract, data: spinHash, isPending: spinPending } = useWriteContract();
+  const { writeContract: writeSpinContract, data: spinHash, isPending: spinPending, reset: resetSpin } = useWriteContract();
   const { isLoading: spinConfirming, isSuccess: spinConfirmed, data: spinReceipt } = useWaitForTransactionReceipt({ hash: spinHash });
 
-  const { writeContract: writeClaimContract, data: claimHash, isPending: claimPending } = useWriteContract();
+  const { writeContract: writeClaimContract, data: claimHash, isPending: claimPending, reset: resetClaim } = useWriteContract();
   const { isLoading: claimConfirming, isSuccess: claimConfirmed } = useWaitForTransactionReceipt({ hash: claimHash });
 
-  const { writeContract: writeBuyContract, data: buyHash, isPending: buyPending } = useWriteContract();
+  const { writeContract: writeBuyContract, data: buyHash, isPending: buyPending, reset: resetBuy } = useWriteContract();
   const { isLoading: buyConfirming, isSuccess: buyConfirmed } = useWaitForTransactionReceipt({ hash: buyHash });
 
   const { price: ethPriceUsd, isLoading: priceLoading } = useEthPrice();
@@ -347,6 +346,7 @@ function App() {
   };
 
   const handleSpin = async () => {
+    resetSpin();
     if (!await ensureNetwork()) return; 
     if (!writeSpinContract || !address) return;
 
@@ -364,17 +364,24 @@ function App() {
     const bufferedCost = rawCost * 1.01;
     const cost = bufferedCost.toFixed(18);
     
-    writeSpinContract({
-      address: CONTRACT_ADDRESS,
-      abi: lotteryAbi,
-      functionName: 'spinWheel',
-      args: [],
-      value: parseEther(cost.toString()), 
-      account: address,
-    });
+    try {
+      writeSpinContract({
+        address: CONTRACT_ADDRESS,
+        abi: lotteryAbi,
+        functionName: 'spinWheel',
+        args: [],
+        value: parseEther(cost.toString()), 
+        account: address,
+      });
+    } catch (e) {
+      console.error('Spin error:', e);
+      setIsSpinning(false);
+      setSpinError('Transaction failed. Please try again.');
+    }
   };
 
   const handleClaim = async () => {
+    resetClaim();
     if (!await ensureNetwork()) return;
     if (!writeClaimContract || !address) return;
     if (isClaimInProgress || claimPending || claimConfirming) return;
@@ -382,29 +389,39 @@ function App() {
     setIsClaimInProgress(true);
     processedClaimHash.current = null;
     
-    writeClaimContract({
-      address: CONTRACT_ADDRESS,
-      abi: lotteryAbi,
-      functionName: 'claimPrize',
-      args: [],
-      account: address,
-    });
+    try {
+      writeClaimContract({
+        address: CONTRACT_ADDRESS,
+        abi: lotteryAbi,
+        functionName: 'claimPrize',
+        args: [],
+        account: address,
+      });
+    } catch (e) {
+      console.error('Claim error:', e);
+      setIsClaimInProgress(false);
+    }
   };
 
   const handleBuyTicket = async () => {
+    resetBuy();
     if (!await ensureNetwork()) return;
     if (!writeBuyContract || !address) return;
     
     const typeId = LOTTERY_TYPE_MAP[activeTab] || 1;
 
-    writeBuyContract({
-      address: CONTRACT_ADDRESS,
-      abi: lotteryAbi,
-      functionName: 'buyTicket',
-      args: [typeId, BigInt(ticketCount)], 
-      value: parseEther(ethAmount),
-      account: address,
-    });
+    try {
+      writeBuyContract({
+        address: CONTRACT_ADDRESS,
+        abi: lotteryAbi,
+        functionName: 'buyTicket',
+        args: [typeId, BigInt(ticketCount)], 
+        value: parseEther(ethAmount),
+        account: address,
+      });
+    } catch (e) {
+      console.error('Buy ticket error:', e);
+    }
   };
 
   const handleManualEthChange = (value: string) => {
